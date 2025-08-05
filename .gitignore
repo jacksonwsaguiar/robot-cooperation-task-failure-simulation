@@ -1,0 +1,27 @@
+/build/
+/install/
+/log/
+
+# Ignorar ficheiros temporários e cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorar ficheiros de ambientes virtuais do Python
+# Se você decidir usar um venv para alguma ferramenta.
+venv/
+*.venv
+env/
+*.env
+
+# Ignorar ficheiros de configuração de IDEs e editores de código
+# Cada desenvolvedor tem as suas próprias configurações locais.
+.vscode/
+.idea/
+*.swp
+*~
+
+# Ignorar ficheiros gerados por sistemas operativos
+.DS_Store
+Thumbs.db
