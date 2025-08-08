@@ -34,16 +34,14 @@ class RobotDriver:
         self.current_yaw = 0.0
         self.front_distance = float('inf') # <-- NOVO: Armazena a distância frontal
 
-        self.node.get_logger().info(f"RobotDriver para '{self.namespace}' inicializado.")
+        self.node.get_logger().info(f"'{self.namespace}' RobotDriver inicialized.")
 
-    # --- NOVO: CALLBACK PARA O LASER ---
     def scan_callback(self, msg):
         """Callback que é chamado sempre que uma nova leitura do laser é recebida."""
         # O TurtleBot3 tem 360 raios. O raio 0 é o que está virado para a frente.
         if len(msg.ranges) > 0:
             self.front_distance = msg.ranges[0]
 
-    # --- NOVO: MÉTODO DE VERIFICAÇÃO ---
     def is_block_in_front(self, contact_threshold=0.2):
         """
         Verifica se há um objeto (o bloco) em contacto com a frente do robô.
@@ -59,7 +57,7 @@ class RobotDriver:
             self.heartbeat_publisher.publish(msg)
 
     def simulate_failure(self):
-        self.node.get_logger().warn(f"SIMULANDO FALHA para o robô '{self.namespace}'!")
+        self.node.get_logger().warn(f"SIMULATING ROBOT FAIL:'{self.namespace}'!")
         self.is_failed = True
         self.stop()
 

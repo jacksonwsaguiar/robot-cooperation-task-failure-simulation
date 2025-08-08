@@ -11,7 +11,7 @@ class TaskLogicNode(Node):
     def __init__(self):
         super().__init__('task_logic_node')
 
-        # Parameter declaration and retrieval
+        # Declaração e obtenção de parâmetros
         self.declare_parameter('robot_params.linear_speed', 0.15)
         self.declare_parameter('robot_params.angular_speed', 0.8)
         self.declare_parameter('robot_params.goal_tolerance', 0.15)
@@ -21,27 +21,27 @@ class TaskLogicNode(Node):
         self.goal_tolerance = self.get_parameter('robot_params.goal_tolerance').get_parameter_value().double_value
         heartbeat_timeout_sec = self.get_parameter('robot_params.heartbeat_timeout').get_parameter_value().double_value
 
-        # Mapping ROS names to Gazebo names and creating drivers
+        # Mapeamento de nomes e criação dos drivers
         num_robots = 3
         self.robot_names = [f'tb3_{i}' for i in range(num_robots)]
         self.gazebo_model_names = {f'tb3_{i}': f'turtlebot_{i}' for i in range(num_robots)}
         self.drivers = {name: RobotDriver(self, name) for name in self.robot_names}
 
-        # Heartbeat Monitoring
+        # Monitorização de Heartbeat
         self.heartbeat_subscriber = self.create_subscription(String, '/heartbeat', self.heartbeat_callback, 10)
         self.last_heartbeat_time = {name: self.get_clock().now() for name in self.robot_names}
         self.robot_status = {name: 'OPERATIONAL' for name in self.robot_names}
         self.status_check_timer = self.create_timer(1.0, self.check_robot_status)
         self.timeout = Duration(seconds=heartbeat_timeout_sec)
-        
-        # Clients for Attach/Detach services
+       
+        # Clientes para os serviços de Attach/Detach
         self.attach_client = self.create_client(AttachLink, '/ATTACHLINK')
         self.detach_client = self.create_client(DetachLink, '/DETACHLINK')
         while not self.attach_client.wait_for_service(timeout_sec=1.0) or not self.detach_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Attach/detach services not available, waiting...')
         self.get_logger().info('Attach/Detach services found.')
-        
-        # Task Management - [block-position, target-area-position]
+       
+        # Gestão de Tarefas
         self.tasks_list = [
             {'id': 0, 'waypoints': [(-3.0, 1.0), (-6.0, 0.8)]},
             {'id': 1, 'waypoints': [(-3.0, -1.0), (-6.0, -1.0)]},
@@ -51,8 +51,7 @@ class TaskLogicNode(Node):
         self.robot_assignments = {name: None for name in self.robot_names}
         self.robot_current_waypoints = {name: [] for name in self.robot_names}
         self.robot_task_status = {name: 'IDLE' for name in self.robot_names}
-        
-        # Control variables
+       
         self.failure_triggered = False
         self.start_time = self.get_clock().now()
         self.timer = self.create_timer(0.1, self.logic_callback)
@@ -60,13 +59,13 @@ class TaskLogicNode(Node):
 
     def attach_block(self, robot_name, block_id):
         req = AttachLink.Request()
-        req.model_name_1 = self.gazebo_model_names[robot_name]
-        req.link_name_1 = 'base_link'
-        req.model_name_2 = f"cilindro_{block_id}"
-        req.link_name_2 = 'link'
+        req.model1_name = self.gazebo_model_names[robot_name]
+        req.link1_name = 'base_link'
+        req.model2_name = f"cilindro_{block_id}"
+        req.link2_name = 'link'
         future = self.attach_client.call_async(req)
         future.add_done_callback(partial(self.attach_response_callback, robot_name=robot_name))
-        self.get_logger().info(f"Requesting to attach '{req.model_name_2}' to '{req.model_name_1}'")
+        self.get_logger().info(f"Requesting to attach '{req.model2_name}' to '{req.model1_name}'")
 
     def attach_response_callback(self, future, robot_name):
         try:
@@ -79,15 +78,15 @@ class TaskLogicNode(Node):
             self.get_logger().error(f"EXCEPTION/FAILURE in attach service call for '{robot_name}': {e}")
             self.robot_task_status[robot_name] = 'RECOVER_BLOCK'
 
-    def detach_block(self, robot_name, block_id):
+    def detach_block(self, robot_name, block_id, callback_fn):
         req = DetachLink.Request()
-        req.model_name_1 = self.gazebo_model_names[robot_name]
-        req.link_name_1 = 'base_link'
-        req.model_name_2 = f"cilindro_{block_id}"
-        req.link_name_2 = 'link'
+        req.model1_name = self.gazebo_model_names[robot_name]
+        req.link1_name = 'base_link'
+        req.model2_name = f"cilindro_{block_id}"
+        req.link2_name = 'link'
         future = self.detach_client.call_async(req)
-        future.add_done_callback(partial(self.detach_response_callback, robot_name=robot_name))
-        self.get_logger().info(f"Requesting to detach '{req.model_name_2}' from '{req.model_name_1}'")
+        future.add_done_callback(callback_fn)
+        self.get_logger().info(f"Requesting to detach '{req.model2_name}' from '{req.model1_name}'")
 
     def detach_response_callback(self, future, robot_name):
         try:
@@ -99,17 +98,31 @@ class TaskLogicNode(Node):
         except Exception as e:
             self.get_logger().error(f"EXCEPTION/FAILURE in detach service call for '{robot_name}': {e}")
             self.robot_task_status[robot_name] = 'RECOVER_BLOCK'
-            
+           
+    def recovery_detach_callback(self, future, original_task):
+        """Callback usado APENAS para a recuperação de falhas."""
+        try:
+            future.result()
+            self.get_logger().info(f"SUCCESS detaching block from failed robot. Task {original_task['id']} is now available.")
+            # Só agora, após a confirmação, devolvemos a tarefa à fila
+            self.unassigned_tasks.append(original_task)
+        except Exception as e:
+            self.get_logger().error(f"Could not detach block from failed robot: {e}. Task {original_task['id']} will be re-added anyway.")
+            self.unassigned_tasks.append(original_task)
+
     def organize_tasks(self):
         for robot_name, original_task in self.robot_assignments.items():
-            if original_task is not None and self.robot_status[robot_name] == 'FAILED':
-                self.get_logger().warn(f"Robot '{robot_name}' failed! Task {original_task['id']} is now pending.")
+            if original_task is not None and self.robot_status[robot_name] == 'FAILED' and self.robot_task_status[robot_name] != 'OUT_OF_SERVICE':
+                self.get_logger().warn(f"Robot '{robot_name}' failed! Recovering its task {original_task['id']}.")
                 block_id = original_task['id']
-                self.detach_block(robot_name, block_id)
-                self.unassigned_tasks.append(original_task)
+                # Chama o detach com o callback de recuperação
+                self.detach_block(robot_name, block_id, partial(self.recovery_detach_callback, original_task=original_task))
+               
+                # Limpa o estado do robô falhado, mas NÃO devolve a tarefa ainda
                 self.robot_assignments[robot_name] = None
                 self.robot_current_waypoints[robot_name] = []
                 self.robot_task_status[robot_name] = 'OUT_OF_SERVICE'
+
         available_robots = [name for name, status in self.robot_task_status.items() if status == 'IDLE' and self.robot_status[name] == 'OPERATIONAL']
         if not available_robots or not self.unassigned_tasks: return
         for robot_name in available_robots:
@@ -154,16 +167,16 @@ class TaskLogicNode(Node):
                     self.get_logger().info(f"--- {name} at pickup location. Requesting to attach block. ---")
                     driver.stop()
                     self.robot_task_status[name] = 'ATTACHING_BLOCK'
-            
+           
             elif status == 'ATTACHING_BLOCK':
                 original_task = self.robot_assignments[name]
                 if original_task:
                     block_id = original_task['id']
                     self.attach_block(name, block_id)
                     self.robot_task_status[name] = 'WAITING_FOR_ATTACH'
-            
+           
             elif status == 'WAITING_FOR_ATTACH':
-                pass # Waiting for service response...
+                pass
 
             elif status == 'GOTO_DROPOFF':
                 if not waypoints:
@@ -182,12 +195,13 @@ class TaskLogicNode(Node):
                 original_task = self.robot_assignments[name]
                 if original_task:
                     block_id = original_task['id']
-                    self.detach_block(name, block_id)
+                    # Passa o callback de sucesso normal
+                    self.detach_block(name, block_id, partial(self.detach_response_callback, robot_name=name))
                     self.robot_task_status[name] = 'WAITING_FOR_DETACH'
 
             elif status == 'WAITING_FOR_DETACH':
-                pass # Waiting for service response...
-            
+                pass
+           
             elif status == 'RECOVER_BLOCK':
                 abandoned_task = self.robot_assignments[name]
                 if abandoned_task and abandoned_task not in self.unassigned_tasks:
@@ -200,7 +214,7 @@ class TaskLogicNode(Node):
         robot_name = msg.data
         if robot_name in self.last_heartbeat_time:
             self.last_heartbeat_time[robot_name] = self.get_clock().now()
-            
+           
     def check_robot_status(self):
         now = self.get_clock().now()
         for name, last_time in self.last_heartbeat_time.items():

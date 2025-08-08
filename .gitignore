@@ -25,3 +25,4 @@ env/
 # Ignorar ficheiros gerados por sistemas operativos
 .DS_Store
 Thumbs.db
+robot-cooperation-task-failure-simulation
